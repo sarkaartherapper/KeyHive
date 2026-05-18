@@ -106,10 +106,10 @@ curl http://localhost:3001/v1/chat/completions \
 Client (subkey)  →  KeyGate proxy  →  OpenAI API (master key)
                          |
                     ┌────┴────┐
-                    │ Validate │  check token, status, expiry, quota
-                    │ Enforce  │  block if revoked / over quota
-                    │ Inject   │  swap subkey → master key (server only)
-                    │ Log      │  record tokens, latency, model, status
+                    │ Validate│  check token, status, expiry, quota
+                    │ Enforce │  block if revoked / over quota
+                    │ Inject  │  swap subkey → master key (server only)
+                    │ Log     │  record tokens, latency, model, status
                     └─────────┘
 ```
 
