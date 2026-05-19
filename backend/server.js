@@ -62,25 +62,26 @@ fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }));
 // ─── Master Keys ─────────────────────────────────────────────────────────────
 fastify.get('/api/master-keys', async () => {
   const db = await getDb();
-  return dbAll(db, 'SELECT id, provider, key_masked, created_at FROM master_keys ORDER BY created_at DESC');
+  return dbAll(db, 'SELECT id, provider, name, key_masked, created_at FROM master_keys ORDER BY created_at DESC');
 });
 
 fastify.post('/api/master-keys', async (req, reply) => {
-  const { provider, api_key } = req.body || {};
+  const { provider, api_key, name } = req.body || {};
   if (!provider || !api_key) return reply.code(400).send({ error: 'provider and api_key required' });
   const db = await getDb();
   const existing = dbGet(db, 'SELECT id FROM master_keys WHERE provider = ?', [provider]);
   if (existing) {
-    dbRun(db, 'UPDATE master_keys SET key_encrypted = ?, key_masked = ? WHERE provider = ?', [
+    dbRun(db, 'UPDATE master_keys SET key_encrypted = ?, key_masked = ?, name = ? WHERE provider = ?', [
       xorEncrypt(api_key),
       api_key.slice(0, 7) + '••••••••' + api_key.slice(-4),
+      name || provider,
       provider,
     ]);
     return { success: true, updated: true };
   }
   const id = randomUUID();
-  dbRun(db, 'INSERT INTO master_keys (id, provider, key_masked, key_encrypted) VALUES (?, ?, ?, ?)', [
-    id, provider,
+  dbRun(db, 'INSERT INTO master_keys (id, provider, name, key_masked, key_encrypted) VALUES (?, ?, ?, ?, ?)', [
+    id, provider, name || provider,
     api_key.slice(0, 7) + '••••••••' + api_key.slice(-4),
     xorEncrypt(api_key),
   ]);
@@ -151,12 +152,15 @@ fastify.post('/v1/chat/completions', async (req, reply) => {
   const db = await getDb();
 
   const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+  const requestSource = (req.headers['x-keygate-client'] === 'dashboard') ? 'dashboard' : 'external';
   if (!token) {
+    dbRun(db, 'INSERT INTO request_logs (id, subkey_id, subkey_name, model, tokens_used, status, source, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [randomUUID(), 'n/a', 'unknown', req.body?.model || 'unknown', 0, 'missing_auth', requestSource, Date.now()-start]);
     return reply.code(401).send({ error: { message: 'Missing Authorization header. Use your KeyGate subkey.', type: 'auth_error' } });
   }
 
   const subkey = dbGet(db, 'SELECT * FROM subkeys WHERE token = ?', [token]);
   if (!subkey) {
+    dbRun(db, 'INSERT INTO request_logs (id, subkey_id, subkey_name, model, tokens_used, status, source, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [randomUUID(), 'invalid', 'invalid_subkey', req.body?.model || 'unknown', 0, 'invalid_subkey', requestSource, Date.now()-start]);
     return reply.code(401).send({ error: { message: 'Invalid subkey. Generate one from the KeyGate dashboard.', type: 'auth_error' } });
   }
   if (subkey.status === 'paused') {
@@ -193,15 +197,15 @@ fastify.post('/v1/chat/completions', async (req, reply) => {
     const tokensUsed = data.usage?.total_tokens || 0;
 
     dbRun(db, 'UPDATE subkeys SET tokens_used = tokens_used + ? WHERE id = ?', [tokensUsed, subkey.id]);
-    dbRun(db, 'INSERT INTO request_logs (id, subkey_id, subkey_name, model, tokens_used, status, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+    dbRun(db, 'INSERT INTO request_logs (id, subkey_id, subkey_name, model, tokens_used, status, source, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
       logId, subkey.id, subkey.name, body.model || 'unknown', tokensUsed,
-      upstream.ok ? 'success' : 'error', latency,
+      upstream.ok ? 'success' : 'error', requestSource, latency,
     ]);
 
     return reply.code(upstream.status).send(data);
   } catch (err) {
-    dbRun(db, 'INSERT INTO request_logs (id, subkey_id, subkey_name, model, tokens_used, status, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?)', [
-      logId, subkey.id, subkey.name, body?.model || 'unknown', 0, 'error', Date.now() - start,
+    dbRun(db, 'INSERT INTO request_logs (id, subkey_id, subkey_name, model, tokens_used, status, source, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
+      logId, subkey.id, subkey.name, body?.model || 'unknown', 0, 'error', requestSource, Date.now() - start,
     ]);
     return reply.code(502).send({ error: { message: 'Upstream provider unreachable.', type: 'proxy_error' } });
   }

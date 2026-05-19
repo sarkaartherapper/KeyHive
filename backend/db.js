@@ -11,6 +11,7 @@ async function getDb() {
     CREATE TABLE IF NOT EXISTS master_keys (
       id TEXT PRIMARY KEY,
       provider TEXT NOT NULL,
+      name TEXT,
       key_masked TEXT NOT NULL,
       key_encrypted TEXT NOT NULL,
       created_at INTEGER DEFAULT (strftime('%s','now'))
@@ -35,11 +36,13 @@ async function getDb() {
       model TEXT,
       tokens_used INTEGER DEFAULT 0,
       status TEXT,
+      source TEXT DEFAULT 'external',
       latency_ms INTEGER,
       created_at INTEGER DEFAULT (strftime('%s','now'))
     );
   `);
 
+  ensureColumns(db);
   return db;
 }
 
@@ -61,3 +64,13 @@ function xorDecrypt(encoded, key = 'keygate-demo-secret') {
 }
 
 module.exports = { getDb, xorEncrypt, xorDecrypt };
+
+
+// lightweight migrations for existing in-memory schema
+function ensureColumns(db){
+  const stmts=[
+    "ALTER TABLE master_keys ADD COLUMN name TEXT",
+    "ALTER TABLE request_logs ADD COLUMN source TEXT DEFAULT 'external'"
+  ];
+  for (const q of stmts){ try{ db.run(q);}catch(e){} }
+}
