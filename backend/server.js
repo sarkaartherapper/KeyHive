@@ -144,6 +144,7 @@ fastify.get('/api/analytics', async () => {
   const db = await getDb();
   const logs = dbAll(db, 'SELECT * FROM request_logs ORDER BY created_at DESC LIMIT 200');
   const totalRequests = logs.length;
+  const failedRequests = logs.filter((l)=>l.status!=='success').length;
   const totalTokens = logs.reduce((s, l) => s + (Number(l.tokens_used) || 0), 0);
   const avgLatency = logs.length ? Math.round(logs.reduce((s, l) => s + (Number(l.latency_ms) || 0), 0) / logs.length) : 0;
   const latencies = logs.map(l=>Number(l.latency_ms)||0).filter(Boolean).sort((a,b)=>a-b);
@@ -154,7 +155,10 @@ fastify.get('/api/analytics', async () => {
   for (const l of logs){byModel[l.model||'unknown']=(byModel[l.model||'unknown']||0)+1;bySubkey[l.subkey_name||'—']=(bySubkey[l.subkey_name||'—']||0)+(Number(l.tokens_used)||0);if(l.status!=='success')err++;}
   const topModels = Object.entries(byModel).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([model,count])=>({model,count}));
   const costAttribution = Object.entries(bySubkey).map(([subkey,tokens])=>({subkey,tokens,est_cost_usd:+(tokens*TOKEN_COST_USD).toFixed(4)})).sort((a,b)=>b.tokens-a.tokens);
-  return { logs, totalRequests, totalTokens, avgLatency, latencyPercentiles:{p50:p(50),p90:p(90),p95:p(95),p99:p(99)}, topModels, errorRate: totalRequests? +(err/totalRequests).toFixed(4):0, costAttribution };
+  const topEndpoints = [{ endpoint: '/v1/chat/completions', count: totalRequests }];
+  const usageGraph = logs.slice(0, 30).reverse().map((l)=>({ts:l.created_at, tokens:l.tokens_used||0, status:l.status}));
+  const errorLogs = logs.filter((l)=>l.status!=='success').slice(0,50);
+  return { logs, totalRequests, failedRequests, totalTokens, avgLatency, latencyPercentiles:{p50:p(50),p90:p(90),p95:p(95),p99:p(99)}, topModels, topEndpoints, usageGraph, errorRate: totalRequests? +(err/totalRequests).toFixed(4):0, costAttribution, errorLogs };
 });
 
 
