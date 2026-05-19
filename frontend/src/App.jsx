@@ -12,7 +12,7 @@ const fmtNum = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 
 const fmtTime = (ts) => (!ts ? '—' : new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
 const fmtDate = (ts) => (!ts ? 'Never' : new Date(ts * 1000).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }));
 const quotaColor = (used, limit) => (((used / limit) * 100 > 90) ? 'over' : ((used / limit) * 100 > 70) ? 'warn' : 'ok');
-const api = async (path, opts = {}) => (await fetch(API + path, { headers: { 'Content-Type': 'application/json', ...opts.headers }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined })).json();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export default function App() {
   const [page, setPage] = useState('overview');
@@ -22,7 +22,11 @@ export default function App() {
   const [analytics, setAnalytics] = useState({ totalRequests: 0, totalTokens: 0, avgLatency: '—', logs: [] });
   const [notif, setNotif] = useState({ show: false, msg: '', type: 'success' });
   const [modal, setModal] = useState('');
+  const [revealedToken, setRevealedToken] = useState('—');
+
+  const api = async (path, opts = {}) => (await fetch(API + path, { headers: { 'Content-Type': 'application/json', ...opts.headers }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined })).json();
   const notify = (msg, type = 'success') => { setNotif({ show: true, msg, type }); setTimeout(() => setNotif((v) => ({ ...v, show: false })), 3000); };
+  const copyText = (text) => navigator.clipboard.writeText(text).then(() => notify('Copied to clipboard'));
 
   const loadOverview = async () => { const [sks, an] = await Promise.all([api('/api/subkeys'), api('/api/analytics')]); setSubkeys(sks); setLogs(an.logs || []); setAnalytics(an); };
   const loadMasterKeys = async () => setMasterKeys(await api('/api/master-keys'));
@@ -32,7 +36,7 @@ export default function App() {
   const navigate = async (p) => { setPage(p); if (p === 'overview') await loadOverview(); if (p === 'masterkeys') await loadMasterKeys(); if (p === 'subkeys') await loadSubkeys(); if (p === 'logs') await loadLogs(); if (p === 'demo') await loadSubkeys(); };
   useEffect(() => { loadOverview(); }, []);
 
-  const ctx = useMemo(() => ({ API, esc, fmtNum, fmtTime, fmtDate, quotaColor, api, notify, modal, setModal, loadMasterKeys, loadSubkeys, loadLogs, loadOverview, subkeys, setSubkeys, masterKeys, logs, analytics }), [modal, subkeys, masterKeys, logs, analytics]);
+  const ctx = useMemo(() => ({ API, esc, fmtNum, fmtTime, fmtDate, quotaColor, sleep, api, notify, copyText, modal, setModal, revealedToken, setRevealedToken, loadMasterKeys, loadSubkeys, loadLogs, loadOverview, subkeys, setSubkeys, masterKeys, logs, analytics, page }), [modal, subkeys, masterKeys, logs, analytics, revealedToken, page]);
 
   return <>
     <div className='app'>
