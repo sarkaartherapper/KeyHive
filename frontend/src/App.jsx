@@ -5,6 +5,7 @@ import MasterKeysPage from './components/pages/MasterKeysPage';
 import SubkeysPage from './components/pages/SubkeysPage';
 import LogsPage from './components/pages/LogsPage';
 import DemoPage from './components/pages/DemoPage';
+import NotificationsPage from './components/pages/NotificationsPage';
 
 const API = 'http://localhost:3001';
 const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -33,7 +34,7 @@ export default function App() {
   const loadSubkeys = async () => setSubkeys(await api('/api/subkeys'));
   const loadLogs = async () => { const an = await api('/api/analytics'); setLogs(an.logs || []); setAnalytics(an); };
 
-  const navigate = async (p) => { setPage(p); if (p === 'overview') await loadOverview(); if (p === 'masterkeys') await loadMasterKeys(); if (p === 'subkeys') await loadSubkeys(); if (p === 'logs') await loadLogs(); if (p === 'demo') await loadSubkeys(); };
+  const navigate = async (p) => { setPage(p); if (p === 'overview') await loadOverview(); if (p === 'masterkeys') await loadMasterKeys(); if (p === 'subkeys') await loadSubkeys(); if (p === 'logs') await loadLogs(); if (p === 'demo') await loadSubkeys(); if (p === 'notifications') await loadSubkeys(); };
   useEffect(() => { loadOverview(); }, []);
 
   const ctx = useMemo(() => ({ API, esc, fmtNum, fmtTime, fmtDate, quotaColor, sleep, api, notify, copyText, modal, setModal, revealedToken, setRevealedToken, loadMasterKeys, loadSubkeys, loadLogs, loadOverview, subkeys, setSubkeys, masterKeys, logs, analytics, page }), [modal, subkeys, masterKeys, logs, analytics, revealedToken, page]);
@@ -47,6 +48,7 @@ export default function App() {
         {page === 'subkeys' && <SubkeysPage ctx={ctx} />}
         {page === 'logs' && <LogsPage ctx={ctx} />}
         {page === 'demo' && <DemoPage ctx={ctx} />}
+        {page === 'notifications' && <NotificationsPage ctx={ctx} />}
       </main>
     </div>
     <div className={`notif ${notif.show ? 'show' : ''} ${notif.type}`}>{notif.msg}</div>

@@ -27,7 +27,21 @@ async function getDb() {
       tokens_used INTEGER DEFAULT 0,
       status TEXT DEFAULT 'active',
       spend_limit_usd REAL,
+      max_requests INTEGER DEFAULT 5000,
+      request_count INTEGER DEFAULT 0,
+      allowed_models TEXT DEFAULT 'all',
       expires_at INTEGER,
+      created_at INTEGER DEFAULT (strftime('%s','now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS quota_requests (
+      id TEXT PRIMARY KEY,
+      subkey_id TEXT NOT NULL,
+      subkey_name TEXT,
+      request_type TEXT NOT NULL,
+      amount TEXT,
+      status TEXT DEFAULT 'pending',
+      note TEXT,
       created_at INTEGER DEFAULT (strftime('%s','now'))
     );
 
@@ -73,6 +87,9 @@ function ensureColumns(db){
   const stmts=[
     "ALTER TABLE subkeys ADD COLUMN requests_per_minute_limit INTEGER DEFAULT 60",
     "ALTER TABLE subkeys ADD COLUMN spend_limit_usd REAL",
+    "ALTER TABLE subkeys ADD COLUMN max_requests INTEGER DEFAULT 5000",
+    "ALTER TABLE subkeys ADD COLUMN request_count INTEGER DEFAULT 0",
+    "ALTER TABLE subkeys ADD COLUMN allowed_models TEXT DEFAULT 'all'",
     "ALTER TABLE master_keys ADD COLUMN name TEXT",
     "ALTER TABLE request_logs ADD COLUMN source TEXT DEFAULT 'external'"
   ];
