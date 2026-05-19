@@ -5,11 +5,13 @@ const { randomUUID } = require('crypto');
 const { getDb, xorEncrypt, xorDecrypt } = require('./db');
 const rpmBuckets = new Map();
 const TOKEN_COST_USD = 0.000002; // simple blended estimate
+const GLOBAL_RPM_LIMIT = 10;
+setInterval(() => { const nowMin=Math.floor(Date.now()/60000); for (const k of rpmBuckets.keys()) { const m=Number(k.split(':')[1]); if (m < nowMin-2) rpmBuckets.delete(k);} }, 60000);
 
 fastify.register(require('@fastify/cors'), {
   origin: true,
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-keygate-client'],
 });
 
 fastify.register(require('@fastify/helmet'), { contentSecurityPolicy: false });
@@ -103,7 +105,7 @@ fastify.get('/api/subkeys', async () => {
 });
 
 fastify.post('/api/subkeys', async (req, reply) => {
-  const { name, provider, monthly_token_limit, requests_per_minute_limit, spend_limit_usd, expires_in_days } = req.body || {};
+  const { name, provider, monthly_token_limit, spend_limit_usd, expires_in_days } = req.body || {};
   if (!name || !provider) return reply.code(400).send({ error: 'name and provider required' });
   const db = await getDb();
   const masterKey = dbGet(db, 'SELECT id FROM master_keys WHERE provider = ?', [provider]);
@@ -112,7 +114,7 @@ fastify.post('/api/subkeys', async (req, reply) => {
   const token = generateSubkeyToken();
   const expires_at = expires_in_days ? Math.floor(Date.now() / 1000) + Number(expires_in_days) * 86400 : null;
   dbRun(db, 'INSERT INTO subkeys (id, name, token, provider, monthly_token_limit, requests_per_minute_limit, spend_limit_usd, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
-    id, name, token, provider, monthly_token_limit || 10000, requests_per_minute_limit || 60, spend_limit_usd ?? null, expires_at,
+    id, name, token, provider, monthly_token_limit || 10000, GLOBAL_RPM_LIMIT, spend_limit_usd ?? null, expires_at,
   ]);
   return dbGet(db, 'SELECT * FROM subkeys WHERE id = ?', [id]);
 });
@@ -187,7 +189,7 @@ fastify.post('/v1/chat/completions', async (req, reply) => {
   const minute = Math.floor(Date.now()/60000);
   const bucketKey = `${subkey.id}:${minute}`;
   const seen = rpmBuckets.get(bucketKey) || 0;
-  const rpmLimit = Number(subkey.requests_per_minute_limit || 60);
+  const rpmLimit = GLOBAL_RPM_LIMIT;
   if (seen >= rpmLimit) {
     return reply.code(429).send({ error: { message: `Rate limit hit (${rpmLimit}/min) for subkey ${subkey.name}.`, type: 'rate_limit_error' } });
   }
