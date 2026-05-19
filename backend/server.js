@@ -3,6 +3,8 @@
 const fastify = require('fastify')({ logger: false });
 const { randomUUID } = require('crypto');
 const { getDb, xorEncrypt, xorDecrypt } = require('./db');
+const rpmBuckets = new Map();
+const TOKEN_COST_USD = 0.000002; // simple blended estimate
 
 fastify.register(require('@fastify/cors'), {
   origin: true,
@@ -101,7 +103,7 @@ fastify.get('/api/subkeys', async () => {
 });
 
 fastify.post('/api/subkeys', async (req, reply) => {
-  const { name, provider, monthly_token_limit, expires_in_days } = req.body || {};
+  const { name, provider, monthly_token_limit, requests_per_minute_limit, spend_limit_usd, expires_in_days } = req.body || {};
   if (!name || !provider) return reply.code(400).send({ error: 'name and provider required' });
   const db = await getDb();
   const masterKey = dbGet(db, 'SELECT id FROM master_keys WHERE provider = ?', [provider]);
@@ -109,8 +111,8 @@ fastify.post('/api/subkeys', async (req, reply) => {
   const id = randomUUID();
   const token = generateSubkeyToken();
   const expires_at = expires_in_days ? Math.floor(Date.now() / 1000) + Number(expires_in_days) * 86400 : null;
-  dbRun(db, 'INSERT INTO subkeys (id, name, token, provider, monthly_token_limit, expires_at) VALUES (?, ?, ?, ?, ?, ?)', [
-    id, name, token, provider, monthly_token_limit || 10000, expires_at,
+  dbRun(db, 'INSERT INTO subkeys (id, name, token, provider, monthly_token_limit, requests_per_minute_limit, spend_limit_usd, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
+    id, name, token, provider, monthly_token_limit || 10000, requests_per_minute_limit || 60, spend_limit_usd ?? null, expires_at,
   ]);
   return dbGet(db, 'SELECT * FROM subkeys WHERE id = ?', [id]);
 });
@@ -140,10 +142,16 @@ fastify.get('/api/analytics', async () => {
   const logs = dbAll(db, 'SELECT * FROM request_logs ORDER BY created_at DESC LIMIT 200');
   const totalRequests = logs.length;
   const totalTokens = logs.reduce((s, l) => s + (Number(l.tokens_used) || 0), 0);
-  const avgLatency = logs.length
-    ? Math.round(logs.reduce((s, l) => s + (Number(l.latency_ms) || 0), 0) / logs.length)
-    : 0;
-  return { logs, totalRequests, totalTokens, avgLatency };
+  const avgLatency = logs.length ? Math.round(logs.reduce((s, l) => s + (Number(l.latency_ms) || 0), 0) / logs.length) : 0;
+  const latencies = logs.map(l=>Number(l.latency_ms)||0).filter(Boolean).sort((a,b)=>a-b);
+  const p = (x)=> latencies.length ? latencies[Math.max(0, Math.ceil((x/100)*latencies.length)-1)] : 0;
+  const byModel = {};
+  const bySubkey = {};
+  let err=0;
+  for (const l of logs){byModel[l.model||'unknown']=(byModel[l.model||'unknown']||0)+1;bySubkey[l.subkey_name||'—']=(bySubkey[l.subkey_name||'—']||0)+(Number(l.tokens_used)||0);if(l.status!=='success')err++;}
+  const topModels = Object.entries(byModel).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([model,count])=>({model,count}));
+  const costAttribution = Object.entries(bySubkey).map(([subkey,tokens])=>({subkey,tokens,est_cost_usd:+(tokens*TOKEN_COST_USD).toFixed(4)})).sort((a,b)=>b.tokens-a.tokens);
+  return { logs, totalRequests, totalTokens, avgLatency, latencyPercentiles:{p50:p(50),p90:p(90),p95:p(95),p99:p(99)}, topModels, errorRate: totalRequests? +(err/totalRequests).toFixed(4):0, costAttribution };
 });
 
 // ─── PROXY — The core product ─────────────────────────────────────────────────
@@ -174,6 +182,22 @@ fastify.post('/v1/chat/completions', async (req, reply) => {
   }
   if (Number(subkey.tokens_used) >= Number(subkey.monthly_token_limit)) {
     return reply.code(429).send({ error: { message: `Monthly quota exhausted (${Number(subkey.monthly_token_limit).toLocaleString()} tokens). Contact your admin.`, type: 'quota_error' } });
+  }
+
+  const minute = Math.floor(Date.now()/60000);
+  const bucketKey = `${subkey.id}:${minute}`;
+  const seen = rpmBuckets.get(bucketKey) || 0;
+  const rpmLimit = Number(subkey.requests_per_minute_limit || 60);
+  if (seen >= rpmLimit) {
+    return reply.code(429).send({ error: { message: `Rate limit hit (${rpmLimit}/min) for subkey ${subkey.name}.`, type: 'rate_limit_error' } });
+  }
+  rpmBuckets.set(bucketKey, seen + 1);
+
+  if (subkey.spend_limit_usd != null) {
+    const estSpend = Number(subkey.tokens_used || 0) * TOKEN_COST_USD;
+    if (estSpend >= Number(subkey.spend_limit_usd)) {
+      return reply.code(429).send({ error: { message: `Spend ceiling reached ($${Number(subkey.spend_limit_usd).toFixed(2)}).`, type: 'spend_limit_error' } });
+    }
   }
 
   const masterKeyRow = dbGet(db, 'SELECT key_encrypted FROM master_keys WHERE provider = ?', [subkey.provider]);
